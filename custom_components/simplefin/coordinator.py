@@ -67,6 +67,11 @@ class SimpleFinDataUpdateCoordinator(DataUpdateCoordinator[FinancialData]):
             # This fixes the "one-way substring matching" issue by extracting
             # institution name from error messages like "Connection to Chase may need attention"
             institution_name = self._extract_institution_from_error(error)
+            LOGGER.warning(
+                "SimpleFIN error for institution '%s': %s",
+                institution_name or "Unknown",
+                error,
+            )
             
             # Create issue for this error
             async_create_issue(

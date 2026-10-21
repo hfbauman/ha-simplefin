@@ -8,12 +8,12 @@
   },
   "issues": {
     "global_error": {
-      "title": "SimpleFIN Global Error",
-      "description": "A global error occurred in SimpleFIN: {error}. Institution: {institution}"
+      "title": "SimpleFIN Error: {institution}",
+      "description": "SimpleFIN reported an issue with {institution}: {error}\n\nPlease check your SimpleFIN Bridge dashboard (https://bridge.simplefin.org/) to reconnect or authenticate this account."
     },
     "stale_account": {
-      "title": "Stale Account",
-      "description": "Account {account_name} from {institution} has not been updated in a long time"
+      "title": "Stale Account: {account_name}",
+      "description": "Account {account_name} from {institution} has not received updates in over 48 hours."
     }
   }
 }
