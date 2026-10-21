@@ -1,0 +1,19 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "possible_error": {
+        "name": "Possible Error"
+      }
+    }
+  },
+  "issues": {
+    "global_error": {
+      "title": "SimpleFIN Global Error",
+      "description": "A global error occurred in SimpleFIN: {error}. Institution: {institution}"
+    },
+    "stale_account": {
+      "title": "Stale Account",
+      "description": "Account {account_name} from {institution} has not been updated in a long time"
+    }
+  }
+}

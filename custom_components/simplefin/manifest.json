@@ -1,0 +1,12 @@
+{
+  "domain": "simplefin",
+  "name": "SimpleFIN",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "https://github.com/hfbauman/ha-simplefin",
+  "issue_tracker": "https://github.com/hfbauman/ha-simplefin/issues",
+  "requirements": ["simplefin4py>=0.0.18"],
+  "dependencies": [],
+  "codeowners": ["@hfbauman"],
+  "iot_class": "cloud_polling"
+}
