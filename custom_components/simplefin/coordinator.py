@@ -9,7 +9,7 @@ from simplefin4py.exceptions import SimpleFinAuthError, SimpleFinPaymentRequired
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
-from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import LOGGER
@@ -38,12 +38,15 @@ class SimpleFinDataUpdateCoordinator(DataUpdateCoordinator[FinancialData]):
     @override
     async def _async_update_data(self) -> Any:
         """Fetch data for all accounts."""
+        # Clear any existing repair issues for simplefin so they do not clutter the Repairs dashboard
+        self._clear_repair_issues()
+
         try:
             data = await self.client.fetch_data()
             
-            # Check for global errors and create issues for them
-            if isinstance(data, FinancialData) and data.errors:
-                self._handle_global_errors(data.errors)
+            # Directly apply errors to matching accounts so binary_sensor updates
+            if isinstance(data, FinancialData):
+                self._apply_errors_to_accounts(data)
             
             return data
         except SimpleFinAuthError as err:
@@ -56,52 +59,94 @@ class SimpleFinDataUpdateCoordinator(DataUpdateCoordinator[FinancialData]):
                 " this issue"
             ) from err
 
-    def _handle_global_errors(self, errors: list[str]) -> None:
-        """Handle global errors by creating Home Assistant repair issues."""
-        hass = self.hass
-        
-        # Check if we have any errors that don't match accounts
-        # This addresses the "dropped global errors" issue
-        for error in errors:
-            # Check if this error message indicates a specific institution
-            # This fixes the "one-way substring matching" issue by extracting
-            # institution name from error messages like "Connection to Chase may need attention"
-            institution_name = self._extract_institution_from_error(error)
-            LOGGER.warning(
-                "SimpleFIN error for institution '%s': %s",
-                institution_name or "Unknown",
-                error,
-            )
-            
-            # Create issue for this error
-            async_create_issue(
-                hass,
-                domain="simplefin",
-                issue_id=f"simplefin_error_{abs(hash(error)) % 1000000}",
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="global_error",
-                translation_placeholders={
-                    "error": str(error),
-                    "institution": institution_name if institution_name else "Unknown",
-                },
-            )
-            
+    def _clear_repair_issues(self) -> None:
+        """Clear any existing simplefin repair issues from Home Assistant."""
+        try:
+            issue_reg = ir.async_get(self.hass)
+            issues_to_delete = [
+                issue_id
+                for (domain, issue_id) in issue_reg.issues
+                if domain == "simplefin"
+            ]
+            for issue_id in issues_to_delete:
+                ir.async_delete_issue(self.hass, "simplefin", issue_id)
+        except Exception as err:
+            LOGGER.debug("Could not clear repair issues: %s", err)
+
+    def _apply_errors_to_accounts(self, data: FinancialData) -> None:
+        """Update possible_error flag and error details on all relevant accounts."""
+        errors = getattr(data, "errors", []) or []
+
+        for account in data.accounts:
+            org_name = (getattr(account.org, "name", "") or "").strip().lower()
+            org_domain = (getattr(account.org, "domain", "") or "").strip().lower()
+            acc_name = (getattr(account, "name", "") or "").strip().lower()
+
+            matched_errors: list[str] = []
+
+            for error in errors:
+                error_clean = error.strip()
+                error_lower = error_clean.lower()
+
+                inst_name = self._extract_institution_from_error(error_clean)
+                inst_lower = inst_name.lower() if inst_name else ""
+
+                is_match = False
+                if inst_lower and (inst_lower in org_name or org_name in inst_lower):
+                    is_match = True
+                elif org_name and (org_name in error_lower or error_lower in org_name):
+                    is_match = True
+                elif org_domain and len(org_domain) > 3 and org_domain in error_lower:
+                    is_match = True
+                elif acc_name and acc_name in error_lower:
+                    is_match = True
+
+                if is_match:
+                    matched_errors.append(error_clean)
+                    LOGGER.warning(
+                        "Setting possible_error=True on account '%s' (%s): %s",
+                        getattr(account, "name", "Account"),
+                        getattr(account.org, "name", "Institution"),
+                        error_clean,
+                    )
+
+            if self._is_account_stale(account):
+                stale_msg = f"Account has not updated in over 48 hours (last balance date: {account.balance_date})"
+                matched_errors.append(stale_msg)
+                LOGGER.warning(
+                    "Setting possible_error=True on stale account '%s' (%s)",
+                    getattr(account, "name", "Account"),
+                    getattr(account.org, "name", "Institution"),
+                )
+
+            if matched_errors:
+                account.possible_error = True
+                account.error_message = "; ".join(matched_errors)
+
     def _extract_institution_from_error(self, error: str) -> str | None:
-        """Extract institution name from error message like 'Connection to Chase may need attention'."""
-        # Look for patterns like "Connection to [institution] may need attention"
-        if "Connection to " in error and " may need attention" in error:
-            parts = error.split("Connection to ")
+        """Extract institution name from error messages like 'Connection to PNC Bank may need attention. Auth required'."""
+        if "Connection to " in error:
+            parts = error.split("Connection to ", 1)
             if len(parts) > 1:
-                institution_part = parts[1]
-                if " may need attention" in institution_part:
-                    institution_name = institution_part.split(" may need attention")[0]
-                    return institution_name.strip()
+                after = parts[1]
+                for delimiter in [
+                    " may need attention",
+                    " requires attention",
+                    " requires",
+                    " has an issue",
+                    " failed",
+                    ":",
+                    ".",
+                ]:
+                    if delimiter in after:
+                        after = after.split(delimiter, 1)[0]
+                institution_name = after.strip()
+                if institution_name:
+                    return institution_name
         return None
 
     def _is_account_stale(self, account: Account) -> bool:
         """Check if an account has not been updated within a reasonable time."""
-        # This addresses the "silent upstream stalls" issue by adding a stale sync threshold
         if not getattr(account, "balance_date", None):
             return False
         try:
