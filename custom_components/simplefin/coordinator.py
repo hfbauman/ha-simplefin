@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, override
 
-from simplefin4py import Account, AccountSet, FinancialData, SimpleFin
+from simplefin4py import Account, FinancialData, SimpleFin
 from simplefin4py.exceptions import SimpleFinAuthError, SimpleFinPaymentRequiredError
 
 from homeassistant.config_entries import ConfigEntry
@@ -42,7 +42,7 @@ class SimpleFinDataUpdateCoordinator(DataUpdateCoordinator[FinancialData]):
             data = await self.client.fetch_data()
             
             # Check for global errors and create issues for them
-            if isinstance(data, AccountSet) and getattr(data, "errors", None):
+            if isinstance(data, FinancialData) and data.errors:
                 self._handle_global_errors(data.errors)
             
             return data
